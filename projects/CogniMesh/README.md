@@ -1,58 +1,48 @@
 # CogniMesh — $COGNI
 
-> **The Settlement & Verification Layer for the Autonomous Machine Economy.**
+> Клиринговый слой для экономики машин: стрим-микроплатежи, PoVT/slash, flash-compute.
 
-Родная финансовая среда для AI-агентов: субцентовые стрим-платежи, ончейн-идентичность, слэш за мусорный инференс, flash-compute кредиты под репутацию.
+## Запуск одной кнопкой
 
-```
-[ Agent A ] ── task + stream ──► [ Agent B ]
-     │                                  │
-     ▼                                  ▼
- ┌──────────────────────────────────────────┐
- │  CogniMesh                               │
- │  AgentRegistry · StreamPayment · Slash   │
- │  FlashCompute · Burn-on-settle           │
- └──────────────────────────────────────────┘
+Нужен только **Node.js 18+**. Зависимостей нет.
+
+```bash
+cd projects/CogniMesh
+./start.sh
 ```
 
-## Почему это деньги, а не мем
+или:
 
-Человек делает 1–5 tx/день. Агент — **10⁴ микроплатежей/час**. GPU-маркеты (Render, Akash) продают железо, но не **проверяют работу** и не **стримят оплату за токен**. Кошельки 2026 (Trust Wallet Agent Kit, Mesh, EIP-8004) дают identity — нам нужен **клиринг**.
+```bash
+cd projects/CogniMesh && npm start
+```
 
-## Структура
+Откроется шлюз на **http://0.0.0.0:8787** — лендинг + живая консоль агентов.
+
+```bash
+npm test    # контрактный референс + API + SDK
+npm run sim # симуляция экономики
+```
+
+Порт: `PORT=8787` (по умолчанию). Хост: `HOST=0.0.0.0`.
+
+## Что умеет веб-морда
+
+- создать агента (DID + стейк + демо-баланс)
+- кран COGNI, flash-займ под репутацию
+- доска A2A-задач: post / take → сеттл 70/20/10 и burn
+- слэш чужого агента
+- стена сеттлов, лента событий, граф меша
+
+## Стек проекта
 
 | Папка | Содержание |
 |---|---|
-| `contracts/` | CogniToken, AgentRegistry, StreamPayment, SlashManager, FlashCompute |
-| `backend/` | Mesh Gateway + лендинг (zero-dep Node) |
-| `sdk/` | Python + JS клиент агента |
-| `simulations/` | A2A экономика (burn, slash, кредиты) |
-| `marketing/` | вайтпейпер, запуск, контент, KPI |
-| `docs/` | продакшен-ранбук |
-
-## Быстрый старт
-
-```bash
-cd projects/CogniMesh/contracts && npm install && npm test
-cd ../backend && npm test && npm start
-# http://0.0.0.0:8787
-cd ../simulations && python3 a2a_economy_sim.py
-```
-
-## Токеномика (кратко)
-
-- Фикс **1 000 000 000 COGNI**, mint нет.
-- Сеттл стрима: **70% провайдеру / 20% казна / 10% burn**.
-- Стейк агента слэшится при провале верификации (PoVT).
-- Flash-compute: беззалог до `reputation * stake / 1e6`.
-
-Полная математика: [whitepaper.md](whitepaper.md).
-
-## Статус
-
-- ✅ Контракты + тесты
-- ✅ Шлюз A2A + лендинг
-- ✅ SDK, симуляция, маркетинг
-- ⬜ Аудит → testnet → TGE
+| `backend/` | шлюз + UI (`public/`) |
+| `contracts/` | Solidity + JS-референс экономики |
+| `sdk/` | JS / Python |
+| `simulations/` | Monte-Carlo burn/slash |
+| `marketing/` | запуск, KPI, пресс |
+| `whitepaper.md` | спецификация |
 
 NFA / DYOR.

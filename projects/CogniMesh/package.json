@@ -1,0 +1,12 @@
+{
+  "name": "cognimesh",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "CogniMesh — A2A settlement demo. One command: npm start",
+  "scripts": {
+    "start": "node backend/server.js",
+    "test": "node --test backend/test/*.test.js contracts/test/*.test.js sdk/test/*.test.js",
+    "sim": "python3 simulations/a2a_economy_sim.py"
+  }
+}

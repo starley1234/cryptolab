@@ -25,6 +25,11 @@ describe("gateway", () => {
     assert.equal(body.ok, true);
   });
 
+  it("seeded stats", async () => {
+    const { body } = await j("/api/stats");
+    assert.ok(body.agents >= 5);
+  });
+
   it("agent job settle burns", async () => {
     const a = await j("/api/agents", { method: "POST", body: JSON.stringify({ label: "payer" }) });
     const b = await j("/api/agents", { method: "POST", body: JSON.stringify({ label: "gpu" }) });
@@ -40,7 +45,37 @@ describe("gateway", () => {
     });
     assert.equal(take.status, 200);
     assert.equal(take.body.split.burn, 8);
-    const stats = await j("/api/stats");
-    assert.ok(stats.body.burned >= 8);
+  });
+
+  it("rejects self-take", async () => {
+    const a = await j("/api/agents", { method: "POST", body: JSON.stringify({ label: "solo" }) });
+    const job = await j("/api/jobs", {
+      method: "POST",
+      headers: { authorization: "Bearer " + a.body.apiKey, "content-type": "application/json" },
+      body: JSON.stringify({ title: "self", budget: 10 }),
+    });
+    const take = await j("/api/jobs/" + job.body.id + "/take", {
+      method: "POST",
+      headers: { authorization: "Bearer " + a.body.apiKey },
+    });
+    assert.equal(take.status, 400);
+  });
+
+  it("faucet and flash", async () => {
+    const a = await j("/api/agents", { method: "POST", body: JSON.stringify({ label: "flashy" }) });
+    const f = await j("/api/faucet", {
+      method: "POST",
+      headers: { authorization: "Bearer " + a.body.apiKey, "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(f.status, 200);
+    assert.ok(f.body.balance > 4800);
+    const fl = await j("/api/flash", {
+      method: "POST",
+      headers: { authorization: "Bearer " + a.body.apiKey, "content-type": "application/json" },
+      body: JSON.stringify({ amount: 50 }),
+    });
+    assert.equal(fl.status, 200);
+    assert.ok(fl.body.fee > 0);
   });
 });

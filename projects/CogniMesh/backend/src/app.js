@@ -9,6 +9,8 @@ const MIME = {
   ".js": "text/javascript; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
+  ".ico": "image/x-icon",
+  ".webp": "image/webp",
 };
 
 export function createApp(options = {}) {
@@ -52,7 +54,16 @@ export function createApp(options = {}) {
         return json(res, 200, { items: gw.wall });
       }
       if (req.method === "GET" && url.pathname === "/api/jobs") {
-        return json(res, 200, { items: gw.jobs.slice(0, 20) });
+        return json(res, 200, { items: gw.jobs.slice(0, 40) });
+      }
+      if (req.method === "GET" && url.pathname === "/api/agents") {
+        return json(res, 200, { items: gw.agentsPublic() });
+      }
+      if (req.method === "GET" && url.pathname === "/api/events") {
+        return json(res, 200, { items: gw.events });
+      }
+      if (req.method === "GET" && url.pathname === "/api/challenges") {
+        return json(res, 200, { items: gw.challenges });
       }
       if (req.method === "POST" && url.pathname === "/api/agents") {
         const body = await readBody(req).catch(() => ({}));
@@ -78,10 +89,27 @@ export function createApp(options = {}) {
         const id = url.pathname.split("/")[3];
         return json(res, 200, gw.takeJob(req.headers.authorization, id));
       }
+      if (req.method === "POST" && url.pathname === "/api/faucet") {
+        const body = await readBody(req).catch(() => ({}));
+        return json(res, 200, gw.faucet(req.headers.authorization, body.amount));
+      }
+      if (req.method === "POST" && url.pathname === "/api/challenge") {
+        const body = await readBody(req);
+        return json(res, 200, gw.challenge(req.headers.authorization, body));
+      }
+      if (req.method === "POST" && url.pathname === "/api/flash") {
+        const body = await readBody(req);
+        return json(res, 200, gw.flash(req.headers.authorization, body.amount));
+      }
       if (req.method === "GET") {
         let path = url.pathname === "/" ? "/index.html" : url.pathname;
         const file = normalize(join(publicDir, path));
         if (!file.startsWith(publicDir) || !existsSync(file) || !statSync(file).isFile()) {
+          const fallback = join(publicDir, "index.html");
+          if (existsSync(fallback) && !path.includes(".")) {
+            res.writeHead(200, { "content-type": MIME[".html"] });
+            return createReadStream(fallback).pipe(res);
+          }
           res.writeHead(404);
           return res.end("not found");
         }
