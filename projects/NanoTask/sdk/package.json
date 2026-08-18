@@ -1,0 +1,12 @@
+{
+  "name": "@nanotask/sdk",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "NanoTask SDK — minimalist client for A2A escrow ($TASK). Zero deps.",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": ["a2a", "escrow", "micropayment", "agents"],
+  "license": "MIT"
+}

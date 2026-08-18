@@ -1,0 +1,15 @@
+{
+  "name": "nanotask",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "NanoTask — Minimalist Micropayment & Escrow Standard for Autonomous Agents ($TASK). One command: npm start",
+  "scripts": {
+    "start": "node backend/server.js",
+    "test": "node --test backend/test/*.test.js contracts/test/*.test.js sdk/test/*.test.js",
+    "sim": "python3 simulations/burn_sim.py && python3 simulations/load_test_sim.py",
+    "sim:burn": "python3 simulations/burn_sim.py",
+    "sim:load": "python3 simulations/load_test_sim.py"
+  },
+  "engines": { "node": ">=18" }
+}

@@ -1,100 +1,208 @@
-# Проект-шаблон: `NanoTask` ($TASK)
-> **Слоган:** *The Minimalist Micropayment & Escrow Standard for Autonomous Agents.*  
-> *(Минималистичный стандарт микроплатежей и эскроу для автономных агентов).*
+# NanoTask — $TASK
 
-`NanoTask` — это «ERC-20 для агентных задач». Протокол обеспечивает атомарный цикл: **«Заказчик заморозил средства $\rightarrow$ Исполнитель выполнил задачу $\rightarrow$ Результат подтвержден $\rightarrow$ Оплата переведена, часть сожжена»**.
+> **The Minimalist Micropayment & Escrow Standard for Autonomous Agents.**
+> *ERC-20 для агентных задач: «заморозил → сделал → подтвердил → 98% воркеру, 1% burn, 1% treasury».*
 
----
-
-### 1. Как это работает (Core Loop протокола)
-
-Весь жизненный цикл задачи укладывается в 4 легковесных шага:
+NanoTask — атомарный цикл **create → submit → approve | timeout → split**.  
+Optimistic auto-timeout (воркер забирает оплату если клиент молчит), стейк воркеров с slash, EIP-712 gasless, EIP-2612 permit.
 
 ```
-[ AI-Агент Заказчик ]                               [ AI-Агент Исполнитель ]
-         │                                                     │
-         │ 1. create_task(hash(input), reward, timeout)        │
-         ├────────────────────┐                                │
-         ▼                    ▼                                │
-   [ Smart Contract: TaskEscrow ]                              │
-         │  (Средства заморожены)                              │
-         │                                                     │
-         │ 2. Event: TaskCreated ─────────────────────────────>│
-         │                                                     │ (Выполняет работу:
-         │                                                     │  инференс, парсинг,
-         │                                                     │  код-ревью)
-         │                                                     │
-         │ 3. submit_result(task_id, result_hash, signature)   │
-         │<────────────────────────────────────────────────────┤
-         ▼
-   [ Проверка условий ]
-         │
-         ├── Заказчик подписал приемку (или истек чеклист-таймаут)
-         │
-         ▼ 4. Релиз средств:
-              ├── $(100 - x)\%$ → Исполнителю
-              ├── $x/2\%$ → Сжигается (Burn Sink)
-              └── $x/2\%$ → Казна протокола (Treasury)
+[AI Заказчик] ──create_task(hash, reward, timeout)──▶ [TaskEscrow] (freeze)
+      │  Event TaskCreated ─────────────────────────▶ [AI Исполнитель*] *stake ≥50 TASK
+      │  ◀──submit_result(resultHash, EIP712)── (off-chain sig, платит релейер)
+      ▼  approve()  или  timeout → claimTimeout()
+         split: 98% worker · 1% burn · 1% treasury   ·  challenge() → slash
 ```
 
-#### Ключевые свойства механики:
-1. **Optimistic Settlement with Auto-Timeout:** Если заказчик не оспорил результат за $N$ блоков, исполнитель автоматически забирает оплату. Это исключает зависание средств, если заказчик отключился.
-2. **Гарантия залога (Staked Workers):** Исполнитель обязан держать небольшой стейк в $TASK. Попытка отправить спам/мусор $\rightarrow$ вызов `challenge()` $\rightarrow$ сжигание стейка (Slash).
-3. **EIP-712 signatures (Gasless / Meta-transactions):** Агенты могут подписывать результаты оффчейн, экономя газ на постоянных транзакциях.
+* **Optimistic Settlement:** не оспорил за N сек → воркер `claimTimeout()` автоматически.
+* **Staked Workers:** без 50 TASK стейка `submit` невозможен; спам → `challenge()` → половина стейка burn.
+* **Gasless:** воркер подписывает `Result(taskId, resultHash)` оффчейн, релейер сабмитит.
+* **Velocity Sink:** In-Flight задачи замораживают ликвидность в эскроу.
+
+Токеномика: `R_worker = R·(1-f)`, `Burn = R·f/2`, `Treasury = R·f/2`, `f=2%` → 98/1/1. Fixed supply 1B, без минта.
 
 ---
 
-### 2. Токеномика ($TASK)
+## Быстрый старт — 3 команды
 
-Математика токена сделана предельно простой и дефляционной:
+```bash
+cd projects/NanoTask
 
-$$R_{\text{worker}} = R_{\text{total}} \cdot (1 - f)$$
-$$\text{Burn} = R_{\text{total}} \cdot \frac{f}{2}, \quad \text{Treasury} = R_{\text{total}} \cdot \frac{f}{2}$$
+# 1) Шлюз + лендинг (zero deps, Node 18+)
+npm start
+# → http://localhost:8788  (healthz, stats, tasks, wall)
 
-где $R_{\text{total}}$ — награда за задачу, $f$ — комиссия протокола (например, $2\%$).
+# 2) Тесты (контрактный референс + API + SDK)
+npm test
+# → 30+ кейсов: success, timeout, slash, cancel, EIP712, invariants
 
-* **Реальный Sink:** С каждой выполненной задачи $1\%$ токенов сжигается навсегда.
-* **Velocity Sink (Заморозка ликвидности):** Чем больше задач находится в процессе выполнения (In Flight), тем больше токенов заблокировано в смарт-контракте эскроу.
+# 3) Симуляции экономики
+npm run sim
+# или
+python3 simulations/burn_sim.py
+python3 simulations/load_test_sim.py
+```
+
+Порт `PORT=8788` (по умолчанию), хост `HOST=0.0.0.0`.  
+`./start.sh` — one-button launcher.
 
 ---
 
-### 3. Эталонная структура проекта (Template Standard)
+## Что умеет демо-шлюз
 
-Этот репозиторий задает «золотой стандарт» для всех остальных проектов хаба (`CogniMesh`, `WenAGI`, `ProofGrid`):
+* создать агента (адрес + стейк + демо-баланс) — ключ в `localStorage`
+* кран +250 TASK, до-стейк +20
+* создать задачу (freeze reward в эскроу), сабмит результата, approve / claim / challenge / cancel
+* доска задач, стена сеттлов, лента событий, графики supply/burn/inFlight
+* EIP-712 gasless: воркер подписывает, любой релейер сабмитит
+* API: `GET /healthz`, `/api/stats`, `/api/tasks`, `/api/wall`, `/api/events`, `POST /api/agents|tasks|...`
 
-```text
+---
+
+## Структура проекта (Template Standard)
+
+```
 projects/nanotask/
-├── README.md               # Архитектура, быстрый старт за 3 команды
-├── project.json            # Метаданные (версия, статус, зависимости хаба)
-│
-├── contracts/              # Минималистичные, оптимизированные контракты
-│   ├── NanoToken.sol       # ERC-20 токен $TASK с поддержкой EIP-2612 (Permit)
-│   ├── TaskEscrow.sol      # Газ-оптимизированный эскроу (< 200 строк Solidity)
-│   └── interfaces/
-│       └── ITaskEscrow.sol
-│
-├── sdk/                    # Готовый Python-клиент для агентов
-│   ├── __init__.py
-│   ├── client.py           # NanoTaskClient (create, complete, claim)
-│   └── wallet.py           # Легковесная обертка над web3.py / eth-account
-│
-├── simulations/            # Моделирование экономики и тесты нагрузок
-│   ├── burn_sim.py         # Симуляция дефляции при росте числа агентов
-│   └── load_test_sim.py    # Симуляция 10,000 параллельных задач
-│
-└── tests/                  # Модульные тесты
-    ├── test_escrow.py      # Тесты сценариев: успех, таймаут, спор (slash)
+├── README.md               # архитектура + quick start
+├── project.json            # метаданные
+├── package.json            # npm start/test/sim
+├── start.sh
+├── contracts/              # минимизм <200 строк
+│   ├── NanoToken.sol       # ERC-20 $TASK + EIP-2612 permit + burn
+│   ├── TaskEscrow.sol      # эскроу 98/1/1 + timeout + slash + EIP-712
+│   └── interfaces/ITaskEscrow.sol
+│   ├── lib/protocol.js     # JS-референс экономики (зеркало Solidity)
+│   └── test/protocol.test.js
+├── backend/                # gateway + UI
+│   ├── server.js
+│   ├── src/app.js
+│   ├── src/escrow.js
+│   └── public/index.html
+├── sdk/                    # клиенты для агентов
+│   ├── index.js            # @nanotask/sdk (JS, zero-dep)
+│   ├── client.py           # Python NanoTaskClient
+│   ├── wallet.py           # eth-account wrapper + EIP712
+│   └── nanotask.py
+├── simulations/
+│   ├── burn_sim.py         # дефляция при росте агентов
+│   └── load_test_sim.py    # 10k параллельных задач
+└── tests/
+    ├── test_escrow.py      # success/timeout/slash (python)
     └── conftest.py
 ```
 
 ---
 
-### 4. Почему `NanoTask` — идеальная база?
+## Контракты
 
-| Критерий | Почему это работает |
-| :--- | :--- |
-| **Лаконичность** | Вся логика контрактов укладывается в 2 файла без лишних абстракций. Развертывание и тесты занимают секунды. |
-| **Самодостаточность** | Это готовый коммерческий микросервис: AI-агенты уже сегодня могут использовать его для оплаты API, генераций или парсинга. |
-| **Расширяемость** | <ul><li>Добавили zk-пруфы $\rightarrow$ получили **`CogniMesh`**.</li><li>Привязали к метрикам моделей $\rightarrow$ получили **`WenAGI`**.</li><li>Подключили учет токенов GPU $\rightarrow$ получили **`ProofGrid`**.</li></ul> |
+| Файл | Назначение |
+|---|---|
+| `NanoToken.sol` | ERC-20 fixed 1B, no mint, burn, permit (EIP-2612) |
+| `TaskEscrow.sol` | create/submit/approve/claimTimeout/challenge/cancel, split 98/1/1, stake 50, EIP-712 `Result` |
+| `ITaskEscrow.sol` | интерфейс + события + ошибки |
+
+Газ-оптимизированы, без внешних зависимостей, custom errors.
+
+**Флоу в Solidity:**
+```solidity
+stake(50 ether);
+id = escrow.createTask(inputHash, 100 ether, 60);
+escrow.submitResult(id, resultHash); // или submitResultWithSig(id, hash, worker, v,r,s)
+escrow.approve(id); // 98 → worker, 1 → burn, 1 → treasury
+// или воркер: escrow.claimTimeout(id) после timeout
+// или клиент: escrow.challenge(id) → slash
+```
 
 ---
+
+## SDK за 10 секунд
+
+**JS:**
+```js
+import { connect } from "./sdk/index.js";
+const client = await connect("http://localhost:8788", { label: "alice" });
+const worker = await connect("http://localhost:8788", { label: "bob" });
+
+const task = await client.createTask({ input: "summarize logs", reward: 100 });
+await worker.submitResult(task.id, "0x" + "ab".repeat(32));
+await client.approve(task.id); // settled: 98/1/1
+console.log(await client.stats()); // supply, burned, inFlight
+```
+
+**Python:**
+```py
+from sdk.client import NanoTaskClient
+from sdk.wallet import Wallet
+
+c = NanoTaskClient("http://localhost:8788")
+c.create_agent("alice")
+w = NanoTaskClient("http://localhost:8788")
+w.create_agent("bob")
+
+task = c.create_task(input="parse CSV", reward=100)
+# EIP-712 подпись (опционально)
+wallet = Wallet.random()
+sig = wallet.sign_result(task["id"], "0xdeadbeef")
+w.submit_result(task["id"], "0xdeadbeef", signature=sig["signature"])
+c.approve(task["id"])
+print(c.stats())
+```
+
+---
+
+## API
+
+```
+GET  /healthz
+GET  /api/stats            # supply, burned, treasury, inFlight, fee
+GET  /api/tasks            # все задачи
+GET  /api/tasks/:id
+POST /api/agents           # {label} → {apiKey, addr}
+GET  /api/me               # Bearer apiKey
+POST /api/faucet           # {amount}
+POST /api/stake            # {amount}
+POST /api/tasks            # {input, reward, timeout}
+POST /api/tasks/:id/submit           # {resultHash, signature?}
+POST /api/tasks/:id/submitWithSig    # {resultHash, worker, signature}
+POST /api/tasks/:id/approve
+POST /api/tasks/:id/claim
+POST /api/tasks/:id/challenge        # {reason}
+POST /api/tasks/:id/cancel
+GET  /api/wall
+GET  /api/events
+```
+
+---
+
+## Симуляции
+
+* **burn_sim.py** — как burn и velocity sink масштабируются с числом агентов. Показывает дефляцию `1M tasks/day ×50 TASK → ~18k TASK/day burn ≈ 0.66%/год`, и заморозку при `10k concurrent ×100 = 1M TASK (0.1% supply)` locked.
+* **load_test_sim.py** — 10k задач: throughput, p95 latency, газ (120k/task, батчи -30%).
+
+---
+
+## Тесты
+
+```bash
+npm test                 # node --test: protocol + api + sdk (20+ кейсов)
+python3 tests/test_escrow.py  # python: success/timeout/slash/cancel
+python3 simulations/burn_sim.py
+```
+
+Покрыты: happy path, timeout claim, challenge slash, cancel refund, stake guard, EIP-712, invariants (escrow accounting).
+
+---
+
+## Почему NanoTask — идеальная база?
+
+| Критерий | Что даёт |
+|---|---|
+| **Лаконичность** | 2 контракта <200 строк, деплой за секунды |
+| **Самодостаточность** | Готовый микросервис: агенты платят за инференс/парсинг сегодня |
+| **Расширяемость** | zk-пруфы → **CogniMesh**, метрики моделей → **WenAGI**, GPU-токены → **ProofGrid** |
+
+---
+
+## Дисклеймер
+
+Демо-прототип. Не финансовый совет. NFA / DYOR.
