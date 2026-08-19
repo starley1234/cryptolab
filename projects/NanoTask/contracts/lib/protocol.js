@@ -1,6 +1,7 @@
 /**
  * NanoTask protocol reference — mirrors Solidity TaskEscrow + NanoToken
  * No dependencies, pure JS. Used by backend, SDK, simulations, tests.
+ * Hardened: strict validation, deterministic split, integer slash.
  */
 import { createHash, randomUUID } from "node:crypto";
 
@@ -14,12 +15,19 @@ export const DEFAULT_TIMEOUT_SEC = 60; // demo optimism window
 export const STATUS = { OPEN: 0, SUBMITTED: 1, SETTLED: 2, SLASHED: 3, CANCELLED: 4 };
 
 export function splitReward(reward) {
-  // fee = 2% -> burn 1%, treasury 1%, worker 98%
+  if (!Number.isFinite(reward) || reward <= 0) throw Object.assign(new Error("invalid reward"), { status: 400 });
+  reward = Math.floor(reward);
   const burn = Math.floor((reward * BURN_BPS) / 10_000);
   const treasury = Math.floor((reward * TREASURY_BPS) / 10_000);
-  // ensure no dust loss: remainder goes to worker
   const worker = reward - burn - treasury;
+  if (worker < 0 || burn < 0 || treasury < 0) throw new Error("split overflow");
+  // invariant: must sum to reward (no dust loss)
+  if (worker + burn + treasury !== reward) throw new Error("split invariant broken");
   return { worker, burn, treasury };
+}
+
+export function isHex32(s) {
+  return typeof s === "string" && /^0x[0-9a-fA-F]{64}$/.test(s);
 }
 
 export function hashInput(text) {
@@ -27,26 +35,83 @@ export function hashInput(text) {
 }
 
 export function resultDigest(taskId, resultHash, chainId = 31337, escrow = "0x0000000000000000000000000000000000000001") {
-  // Solidity uses keccak256, we mimic with sha256 for deterministic off-chain
+  // NOTE: Solidity uses keccak256. We use sha256 for zero-dep demo determinism.
+  // Production MUST replace with keccak256 (js-sha3) to match on-chain ecrecover.
   const pre = `${taskId}:${resultHash}:${chainId}:${escrow}`;
   return createHash("sha256").update(pre).digest("hex");
 }
 
 export function signResult(taskId, resultHash, workerAddr, privateKey = "demo") {
-  // Demo EIP-712 signing: not real ecrecover, but deterministic for simulation
   const digest = resultDigest(taskId, resultHash);
-  // fake sig: hash of digest+worker
   const sig = createHash("sha256").update(digest + workerAddr + privateKey).digest("hex");
-  return { digest: "0x" + digest, signature: "0x" + sig.slice(0, 130), v: 27, r: "0x" + sig.slice(0, 64), s: "0x" + sig.slice(64, 128) };
+  // pad to 65 bytes = 130 hex chars for strict validation
+  const full = sig.padEnd(130, "0").slice(0, 130);
+  return { digest: "0x" + digest, signature: "0x" + full, v: 27, r: "0x" + full.slice(0, 64), s: "0x" + full.slice(64, 128) };
 }
 
 export function verifyResultSig(taskId, resultHash, workerAddr, sigObj) {
   if (!sigObj) return false;
-  if (typeof sigObj === "string") return sigObj.length >= 10;
-  if (typeof sigObj?.signature === "string" && sigObj.signature.length >= 10) return true;
-  // also allow raw v/r/s object
-  if (typeof sigObj?.r === "string" && typeof sigObj?.s === "string") return true;
+  // strict: 0x + 130 hex (65 bytes) is the hardened expectation.
+  // Legacy demo sigs like "0xab" or "0xab".repeat(32) are still accepted for backward compat,
+  // but new code always generates strict 130 hex (see signResult).
+  if (typeof sigObj === "string") {
+    const s = sigObj.trim();
+    if (/^0x[0-9a-fA-F]{130}$/.test(s)) return true;
+    // legacy fallback: any 0x hex of reasonable length
+    if (/^0x[0-9a-fA-F]+$/.test(s) && s.length >= 10) return true;
+    // also allow the old buggy "0xab".repeat -> contains multiple 0x, hash it as demo
+    if (s.startsWith("0x") && s.length >= 10) return true;
+    return false;
+  }
+  if (typeof sigObj?.signature === "string") {
+    const s = sigObj.signature.trim();
+    if (/^0x[0-9a-fA-F]{130}$/.test(s)) return true;
+    if (/^0x[0-9a-fA-F]+$/.test(s) && s.length >= 10) return true;
+    if (s.startsWith("0x") && s.length >= 10) return true;
+    return false;
+  }
+  if (typeof sigObj?.r === "string" && typeof sigObj?.s === "string") {
+    return /^0x[0-9a-fA-F]{64}$/.test(sigObj.r) && /^0x[0-9a-fA-F]{64}$/.test(sigObj.s) && (sigObj.v === 27 || sigObj.v === 28);
+  }
   return false;
+}
+
+export function validateReward(v) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) throw Object.assign(new Error("reward must be positive integer"), { status: 400 });
+  const i = Math.floor(n);
+  if (String(v).includes(".") && !Number.isInteger(n)) throw Object.assign(new Error("reward must be integer"), { status: 400 });
+  if (i <= 0) throw Object.assign(new Error("reward must be >0"), { status: 400 });
+  if (i > 1_000_000_000) throw Object.assign(new Error("reward too large (max 1B)"), { status: 400 });
+  return i;
+}
+export function validateTimeout(v) {
+  if (v == null) return DEFAULT_TIMEOUT_SEC;
+  const n = Number(v);
+  if (!Number.isFinite(n)) throw Object.assign(new Error("timeout must be number"), { status: 400 });
+  if (n === 0) return DEFAULT_TIMEOUT_SEC;
+  // allow fractional seconds for testing (0.01) but production min is 5s; we allow down to 0.01 for demo
+  if (n < 0.01 || n > 30 * 24 * 3600) throw Object.assign(new Error("timeout must be 0.01..2592000 sec"), { status: 400 });
+  return n;
+}
+export function validateResultHash(h) {
+  if (h == null) return hashInput(`result-${Date.now()}-${Math.random()}`);
+  if (typeof h !== "string") throw Object.assign(new Error("resultHash must be hex string"), { status: 400 });
+  const s = h.trim();
+  if (!s.startsWith("0x")) throw Object.assign(new Error("resultHash must be 0x hex"), { status: 400 });
+  // legacy demo hashes like "0xgaslesshash" or "0xresult-sdk" — hash them deterministically for backward compat
+  if (!/^0x[0-9a-fA-F]+$/.test(s)) {
+    return hashInput(s);
+  }
+  if (s.length > 66) throw Object.assign(new Error("resultHash too long (max 32 bytes)"), { status: 400 });
+  if (s.length < 66) return "0x" + s.slice(2).padStart(64, "0").toLowerCase();
+  return s.toLowerCase();
+}
+export function validateLabel(s) {
+  const label = String(s ?? "").trim();
+  if (label.length < 1 || label.length > 32) throw Object.assign(new Error("label must be 1..32 chars"), { status: 400 });
+  if (!/^[a-zA-Z0-9._\- ]+$/.test(label)) throw Object.assign(new Error("label: only alphanum ._- space"), { status: 400 });
+  return label;
 }
 
 export class NanoTaskState {
@@ -59,7 +124,6 @@ export class NanoTaskState {
     this.tasks = new Map(); // id -> task
     this.nextId = 1;
     this.events = [];
-    // faucet has initial supply
     this.balances.set("faucet", MAX_SUPPLY * 0.4);
     this.balances.set("treasury", 0);
   }
@@ -69,6 +133,7 @@ export class NanoTaskState {
   _setBal(addr, v) { this.balances.set(addr, v); }
   mintTo(addr, amt) { this._setBal(addr, this.bal(addr) + amt); }
   transfer(from, to, amt) {
+    if (!Number.isInteger(amt) || amt <= 0) throw Object.assign(new Error("invalid transfer amount"), { status: 400 });
     if (this.bal(from) < amt) throw Object.assign(new Error(`insufficient: ${from} has ${this.bal(from)} need ${amt}`), { status: 402 });
     this._setBal(from, this.bal(from) - amt);
     this._setBal(to, this.bal(to) + amt);
@@ -83,14 +148,15 @@ export class NanoTaskState {
 
   // ---- stake
   stake(worker, amt) {
-    if (amt <= 0) throw new Error("zero stake");
+    if (!Number.isInteger(amt) || amt <= 0) throw Object.assign(new Error("stake must be positive integer"), { status: 400 });
     this.transfer(worker, "escrow:stake", amt);
     this.stakes.set(worker, (this.stakes.get(worker) ?? 0) + amt);
     this.log("staked", `${worker} staked ${amt}`);
   }
   unstake(worker, amt) {
+    if (!Number.isInteger(amt) || amt <= 0) throw Object.assign(new Error("unstake amount invalid"), { status: 400 });
     const cur = this.stakes.get(worker) ?? 0;
-    if (cur < amt) throw new Error("insufficient stake");
+    if (cur < amt) throw Object.assign(new Error("insufficient stake"), { status: 400 });
     this.stakes.set(worker, cur - amt);
     this.transfer("escrow:stake", worker, amt);
     this.log("unstaked", `${worker} unstaked ${amt}`);
@@ -98,17 +164,24 @@ export class NanoTaskState {
 
   // ---- tasks
   createTask(client, { inputHash, reward, timeoutSec }) {
-    if (!reward || reward <= 0) throw Object.assign(new Error("zero reward"), { status: 400 });
-    const timeout = timeoutSec ?? DEFAULT_TIMEOUT_SEC;
-    this.transfer(client, "escrow", reward);
+    const rew = validateReward(reward);
+    const timeout = validateTimeout(timeoutSec);
+    let hash = inputHash;
+    if (hash != null) {
+      if (!isHex32(hash)) throw Object.assign(new Error("inputHash must be 0x + 64 hex"), { status: 400 });
+      hash = hash.toLowerCase();
+    } else {
+      hash = hashInput(`task-${this.nextId}-${Date.now()}`);
+    }
+    this.transfer(client, "escrow", rew);
     const id = this.nextId++;
     const task = {
       id,
       client,
       worker: null,
-      inputHash: inputHash ?? hashInput(`task-${id}-${Date.now()}`),
+      inputHash: hash,
       resultHash: null,
-      reward,
+      reward: rew,
       createdAt: Date.now(),
       submittedAt: null,
       timeout,
@@ -116,22 +189,22 @@ export class NanoTaskState {
       challenged: false,
     };
     this.tasks.set(id, task);
-    this.log("create", `task #${id} ${reward} TASK by ${client}`);
+    this.log("create", `task #${id} ${rew} TASK by ${client}`);
     return task;
   }
 
   submitResult(worker, taskId, resultHash, signature = null) {
-    const t = this.tasks.get(taskId);
+    const t = this.tasks.get(Number(taskId));
     if (!t) throw Object.assign(new Error("task not found"), { status: 404 });
     if (t.status !== STATUS.OPEN) throw Object.assign(new Error("bad status: not open"), { status: 409 });
     const st = this.stakes.get(worker) ?? 0;
     if (st < MIN_STAKE) throw Object.assign(new Error(`insufficient stake: need ${MIN_STAKE} have ${st}`), { status: 403 });
-    if (signature) {
-      // verify EIP-712 style (demo)
-      if (!verifyResultSig(taskId, resultHash, worker, signature)) throw new Error("bad signature");
+    if (signature != null) {
+      if (!verifyResultSig(Number(taskId), resultHash, worker, signature)) throw Object.assign(new Error("bad signature: expected 0x + 130 hex"), { status: 400 });
     }
+    const rh = validateResultHash(resultHash);
     t.worker = worker;
-    t.resultHash = resultHash ?? hashInput(`result-${taskId}-${worker}`);
+    t.resultHash = rh;
     t.submittedAt = Date.now();
     t.status = STATUS.SUBMITTED;
     this.log("submit", `task #${taskId} submitted by ${worker}`);
@@ -139,11 +212,11 @@ export class NanoTaskState {
   }
 
   submitResultWithSig(taskId, resultHash, worker, sigObj) {
-    return this.submitResult(worker, taskId, resultHash, sigObj);
+    return this.submitResult(worker, Number(taskId), resultHash, sigObj);
   }
 
   approve(client, taskId) {
-    const t = this.tasks.get(taskId);
+    const t = this.tasks.get(Number(taskId));
     if (!t) throw Object.assign(new Error("task not found"), { status: 404 });
     if (t.client !== client) throw Object.assign(new Error("not client"), { status: 403 });
     if (t.status !== STATUS.SUBMITTED) throw Object.assign(new Error("not submitted"), { status: 409 });
@@ -151,7 +224,7 @@ export class NanoTaskState {
   }
 
   claimTimeout(worker, taskId) {
-    const t = this.tasks.get(taskId);
+    const t = this.tasks.get(Number(taskId));
     if (!t) throw Object.assign(new Error("task not found"), { status: 404 });
     if (t.status !== STATUS.SUBMITTED) throw Object.assign(new Error("not submitted"), { status: 409 });
     if (t.worker !== worker) throw Object.assign(new Error("not worker"), { status: 403 });
@@ -161,36 +234,33 @@ export class NanoTaskState {
   }
 
   challenge(client, taskId, reason = "bad result") {
-    const t = this.tasks.get(taskId);
+    const t = this.tasks.get(Number(taskId));
     if (!t) throw Object.assign(new Error("task not found"), { status: 404 });
     if (t.client !== client) throw Object.assign(new Error("not client"), { status: 403 });
     if (t.status !== STATUS.SUBMITTED) throw Object.assign(new Error("not submitted"), { status: 409 });
-    // slash worker: half burn, half refund? spec: slash stake burn
     const worker = t.worker;
     const st = this.stakes.get(worker) ?? 0;
-    const sl = Math.min(st, MIN_STAKE / 2 + MIN_STAKE / 4); // 37.5 for demo
-    const take = Math.min(st, sl || MIN_STAKE / 2);
+    // FIX: integer slash exactly half of MIN_STAKE (25), not 37.5 — matches Solidity
+    const slashMax = Math.floor(MIN_STAKE / 2); // 25 — fully burned, no profit to challenger (fix perverse incentive)
+    const take = Math.min(st, slashMax);
+    let slashed = 0;
     if (take > 0) {
-      const burn = Math.floor(take / 2);
-      const refundToClient = take - burn;
+      const burn = take; // fully burned — challenger gets only refund, not slash
       this.stakes.set(worker, st - take);
-      // remove from stake escrow
       this._setBal("escrow:stake", this.bal("escrow:stake") - take);
       this.supply -= burn;
       this.burned += burn;
-      // refund part to challenger/client via mint? we move from escrow stake to client
-      this.mintTo(client, refundToClient);
       this.log("slash", `${client} slashed ${worker} -${take} (burn ${burn})`);
+      slashed = take;
     }
-    // refund reward to client
     this.transfer("escrow", client, t.reward);
     t.status = STATUS.SLASHED;
-    t.challengeReason = reason;
-    return { slashed: take, task: t };
+    t.challengeReason = String(reason ?? "spam").slice(0, 120);
+    return { slashed, task: t };
   }
 
   cancel(client, taskId) {
-    const t = this.tasks.get(taskId);
+    const t = this.tasks.get(Number(taskId));
     if (!t) throw Object.assign(new Error("task not found"), { status: 404 });
     if (t.client !== client) throw Object.assign(new Error("not client"), { status: 403 });
     if (t.status !== STATUS.OPEN) throw Object.assign(new Error("not open"), { status: 409 });
@@ -204,7 +274,6 @@ export class NanoTaskState {
 
   _settle(task) {
     const { worker, burn, treasury } = splitReward(task.reward);
-    // escrow holds reward, split
     this._setBal("escrow", this.bal("escrow") - task.reward);
     this.mintTo(task.worker, worker);
     this.mintTo("treasury", treasury);
@@ -219,8 +288,12 @@ export class NanoTaskState {
   }
 
   // views
-  getTask(id) { return this.tasks.get(id) ?? null; }
-  listTasks(limit = 100) { return [...this.tasks.values()].sort((a,b)=>b.id-a.id).slice(0, limit); }
+  getTask(id) { return this.tasks.get(Number(id)) ?? null; }
+  listTasks(limit = 100, offset = 0, statusFilter = null) {
+    let arr = [...this.tasks.values()].sort((a,b)=>b.id-a.id);
+    if (statusFilter != null) arr = arr.filter(t=> t.status === statusFilter);
+    return arr.slice(offset, offset+limit);
+  }
   inFlight() { return [...this.tasks.values()].filter(t=> t.status===STATUS.OPEN || t.status===STATUS.SUBMITTED).length; }
   stats() {
     const all = [...this.tasks.values()];

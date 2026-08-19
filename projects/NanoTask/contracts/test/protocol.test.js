@@ -93,7 +93,7 @@ describe("challenge / slash", () => {
     const { slashed } = st.challenge("client", t.id, "spam");
     assert.ok(slashed > 0);
     assert.equal(t.status, STATUS.SLASHED);
-    assert.equal(st.bal("client"), balClientBefore + 150 + (slashed - Math.floor(slashed/2))); // refund + slash compensation
+    assert.equal(st.bal("client"), balClientBefore + 150); // refund only — no profit (fix perverse incentive)
     assert.equal(st.stakes.get("worker"), stakeBefore - slashed);
     assert.ok(st.burned > 0);
   });

@@ -1,0 +1,22 @@
+{
+  "name": "nanotask-contracts",
+  "version": "1.1.0",
+  "description": "NanoTask ($TASK) — ERC-20 + TaskEscrow 98/1/1. Minimalist escrow for agents.",
+  "type": "module",
+  "scripts": {
+    "compile": "node scripts/compile.js",
+    "test": "hardhat test --no-compile",
+    "deploy:base-sepolia": "hardhat run scripts/deploy.js --no-compile --network baseSepolia",
+    "deploy:base": "hardhat run scripts/deploy.js --no-compile --network base"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-mocha": "^3.1.0",
+    "@nomicfoundation/hardhat-viem": "^3.0.9",
+    "chai": "^5.2.2",
+    "ethers": "^6.15.0",
+    "hardhat": "^3.13.0",
+    "mocha": "^11.7.2",
+    "solc": "0.8.28",
+    "viem": "^2.35.0"
+  }
+}

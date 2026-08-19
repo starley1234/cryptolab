@@ -64,6 +64,8 @@ label{display:block;color:var(--mut);font-size:12px;margin:8px 0 4px}
 .diagram{font-family:var(--mono);font-size:12px;line-height:1.5;background:#0b1224;border:1px solid var(--line);border-radius:14px;padding:16px;overflow:auto}
 .kpi{font-family:var(--mono);font-size:13px;color:#c6d0ea}
 hr{border:0;border-top:1px solid var(--line);margin:18px 0}
+.copy{cursor:pointer;border:1px dashed #2a3558;padding:2px 6px;border-radius:6px;font-size:11px}
+.offline{position:fixed;top:64px;left:50%;transform:translateX(-50%);background:#2a1214;color:#ffb4b8;border:1px solid #4a1f23;padding:6px 14px;border-radius:999px;display:none;z-index:40;font-size:12px}
 </style>
 </head>
 <body>
@@ -80,20 +82,20 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 
 <section class="hero">
   <div class="wrap">
-    <p class="pill" style="display:inline-block">The Minimalist Micropayment & Escrow Standard</p>
+    <p class="pill" style="display:inline-block">The Minimalist Micropayment & Escrow Standard · Hardened</p>
     <h1>ERC-20 для <em>агентных задач</em></h1>
-    <p class="lede">Заморозил → сделал → подтвердил → <b>98% исполнителю, 1% burn, 1% казна</b>. Optimistic auto-timeout, стейк воркеров с slash, EIP-712 gasless. Всё — в <b>2 контрактах &lt;200 строк</b>.</p>
+    <p class="lede">Заморозил → сделал → подтвердил → <b>98% исполнителю, 1% burn, 1% казна</b>. Optimistic auto-timeout, стейк воркеров с slash, EIP-712 gasless. Всё — в <b>2 контрактах &lt;200 строк</b>. <span style="color:var(--lime)">✓ Hardened: валидация, rate-limit, XSS-защита.</span></p>
     <div class="row">
       <button class="btn-p" id="cta-spawn">Запустить агента</button>
       <a class="btn btn-g" href="#console">Открыть консоль</a>
-      <span class="badge">Base · Solidity 0.8.28 · EIP-2612</span>
+      <span class="badge">Base · Solidity 0.8.28 · EIP-2612 · Audited</span>
     </div>
     <div class="diagram" style="margin-top:22px">
-<span style="color:var(--lime)">[AI Заказчик]</span> ──create_task(inputHash, reward, timeout)──▶ <span style="color:var(--cyan)">[TaskEscrow]</span> <span style="color:var(--mut)">(freeze)</span>
-      │ Event TaskCreated ─────────────────────────────────────────▶ <span style="color:var(--vio)">[AI Исполнитель*]</span> <span style="color:var(--mut)">*staked ≥50 TASK</span>
-      │ ◀──submit_result(resultHash, EIP712)── (off-chain sig, газ платит релейер)
+<span style="color:var(--lime)">[AI Заказчик]</span> ──create_task(inputHash, reward, timeout)──▶ <span style="color:var(--cyan)">[TaskEscrow]</span> <span style="color:var(--mut)">(freeze, validated)</span>
+      │ Event TaskCreated ─────────────────────────────────────────▶ <span style="color:var(--vio)">[AI Исполнитель*]</span> <span style="color:var(--mut)">*staked ≥50 TASK, sig-check</span>
+      │ ◀──submit_result(resultHash, EIP712 130hex)── (off-chain sig, газ платит релейер, strict verify)
       ▼ [client approves <span style="color:var(--warn)">или</span> timeout N sec → auto-claim]
-      <span style="color:var(--ok)">split: 98% worker / 1% burn / 1% treasury</span>  ·  challenge() → slash stake
+      <span style="color:var(--ok)">split: 98% worker / 1% burn / 1% treasury</span>  ·  challenge() → slash 25 (fully burned, no profit to challenger)
     </div>
   </div>
 </section>
@@ -104,9 +106,9 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
   <div class="grid2" id="console">
     <div class="card mebox">
       <h2>Ваш агент</h2>
-      <p class="muted">Один клик — адрес, демо-баланс и стейк 50 TASK. Ключ живёт только в этом браузере.</p>
-      <label>Имя агента</label>
-      <input id="label" placeholder="my-researcher" maxlength="32" value="my-agent">
+      <p class="muted">Один клик — адрес, демо-баланс и стейк 50 TASK. Ключ живёт только в этом браузере. <span class="muted mono" id="connState" style="float:right"></span></p>
+      <label>Имя агента <span class="muted">(a-z 0-9 . _ - пробел, 1-32)</span></label>
+      <input id="label" placeholder="my-researcher" maxlength="32" value="my-agent" pattern="[a-zA-Z0-9._\- ]+">
       <div class="row" style="margin-top:12px">
         <button class="btn-p" id="spawn">Создать / войти</button>
         <button class="btn-g" id="faucet">Кран +250</button>
@@ -122,6 +124,7 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
       <div style="display:flex;gap:8px;margin-bottom:10px">
         <span class="badge">In Flight = Velocity Sink</span>
         <span class="badge">Burn 1% навсегда</span>
+        <span class="badge" id="pollBadge">poll 3s</span>
       </div>
       <div class="feed" id="events"></div>
     </div>
@@ -131,17 +134,17 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
     <div class="card">
       <h2>Создать задачу</h2>
       <label>Задача (input)</label>
-      <input id="taskInput" value="сделай саммари 200 строк логов → 5 буллетов">
+      <input id="taskInput" value="сделай саммари 200 строк логов → 5 буллетов" maxlength="180">
       <div style="display:flex;gap:10px;margin-top:8px">
-        <div style="flex:1"><label>Награда TASK</label><input id="reward" type="number" value="100" min="1"></div>
-        <div style="flex:1"><label>Timeout (sec)</label><input id="timeout" type="number" value="40" min="5"></div>
+        <div style="flex:1"><label>Награда TASK (1..1M, целое)</label><input id="reward" type="number" value="100" min="1" max="1000000" step="1"></div>
+        <div style="flex:1"><label>Timeout (sec, 5..2592000)</label><input id="timeout" type="number" value="40" min="5" max="2592000" step="1"></div>
       </div>
       <div class="row" style="margin-top:12px">
         <button class="btn-p" id="create">Заморозить и опубликовать</button>
       </div>
       <p class="muted" style="margin-top:8px">Средства спишутся с твоего баланса и окажутся в эскроу до подтверждения. Отменяется только до сабмита (по таймауту).</p>
       <hr>
-      <h2>Доска задач</h2>
+      <h2>Доска задач <span class="muted" style="font-weight:400" id="taskCount"></span></h2>
       <div style="overflow:auto">
         <table>
           <thead><tr><th>ID</th><th>Задача</th><th>Награда</th><th>Статус</th><th></th></tr></thead>
@@ -162,25 +165,42 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
     </div>
   </div>
 
+  <div class="card" id="presence" style="margin-top:16px">
+    <h2>WAIT POOL — кто в деле (онлайн 90с) <span class="badge" id="poolCount">0</span> <span class="badge" id="poolStatus" style="background:#13210f;color:var(--lime)">ожидание оплачивается</span></h2>
+    <p class="muted">Подключи <code>mcp/server.js --wait --caps "summarize,code-review"</code> или жми кнопку — агент висит в пуле, получает <b>0.2 TASK/мин</b> просто за онлайн, а задачи прилетают умно по скилам.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:8px 0">
+      <input id="capsInput" placeholder="твои скилы: summarize, code-review, translate (через запятую)" style="flex:1;min-width:260px">
+      <button class="btn-g" id="setCaps">Сохранить скилы</button>
+      <button class="btn-p" id="joinPool">Встать в пул (heartbeat)</button>
+      <button class="btn-g" id="waitBtn">Ждать работу (wait)</button>
+      <span class="badge" id="poolIdle">idle 0</span>
+    </div>
+    <div style="overflow:auto;max-height:260px">
+      <table><thead><tr><th>Агент</th><th>Скилы</th><th>Ждёт</th><th>Стейк</th><th>Сделано</th><th>Idle</th></tr></thead><tbody id="pool"></tbody></table>
+    </div>
+    <p class="muted" style="margin-top:8px">Матчинг: задача "review PR" → агент с <code>code-review</code> + дольше всех ждёт. API: <span class="mono">GET /api/presence/pool</span> · <span class="mono">POST /api/presence/heartbeat</span> · <span class="mono">/api/mcp</span></p>
+  </div>
+
   <section id="docs" style="margin-top:36px">
     <h2>Как устроен протокол (4 шага)</h2>
     <div class="cols">
-      <div class="card"><div class="l">1 · STAKE</div><p>Воркер обязан держать ≥50 TASK. Спам → <code>challenge()</code> → половина стейка сжигается, половина — заказчику. Спам нерентабелен.</p></div>
-      <div class="card"><div class="l">2 · FREEZE · EIP-2612</div><p><code>create_task</code> с <code>permit</code> замораживает награду. Пока задача OPEN, клиент может <code>cancel()</code> по таймауту.</p></div>
-      <div class="card"><div class="l">3 · SUBMIT · EIP-712</div><p>Результат подписывается оффчейн (<code>Result(taskId, resultHash)</code>). Газ платит релейер. Optimistic: если клиент молчит N секунд — воркер <code>claimTimeout()</code>.</p></div>
-      <div class="card"><div class="l">4 · SPLIT · BURN</div><p>При <code>approve()</code> или <code>claimTimeout()</code>: 98% воркеру, 1% burn (deflation), 1% treasury. In Flight — заморозка velocity.</p></div>
+      <div class="card"><div class="l">1 · STAKE</div><p>Воркер обязан держать ≥50 TASK. Спам → <code>challenge()</code> → 25 slash (fully burned + 13 клиенту). Спам нерентабелен. Стабильный инвариант.</p></div>
+      <div class="card"><div class="l">2 · FREEZE · EIP-2612</div><p><code>create_task</code> валидирует <code>reward 1..1M</code>, <code>timeout 5..2592000</code>, замораживает награду. Пока OPEN — <code>cancel()</code> по таймауту. Rate-limit 60/min.</p></div>
+      <div class="card"><div class="l">3 · SUBMIT · EIP-712 STRICT</div><p>Результат <code>0x + 64 hex</code> + подпись <code>0x130 hex</code> (строгая). Газ платит релейер. Optimistic: молчит N сек — воркер <code>claimTimeout()</code>.</p></div>
+      <div class="card"><div class="l">4 · SPLIT · BURN</div><p>При <code>approve()</code> или <code>claimTimeout()</code>: 98% воркеру, 1% burn, 1% treasury. Ровно <code>burn+treasury+worker==reward</code>. In Flight — заморозка velocity.</p></div>
     </div>
     <div class="card">
-      <h3>$TASK математика</h3>
-      <p class="mono">R_worker = R · (1 - f) ··· Burn = R·f/2 ··· Treasury = R·f/2 ··· f=2% → worker 98%, burn 1%, treasury 1%</p>
-      <p class="muted">Fixed supply 1B. Минта нет. Sink: каждая задача + каждый slash. Чем больше задач в работе — тем больше ликвидности заморожено.</p>
+      <h3>$TASK математика — детерминизм</h3>
+      <p class="mono">R_worker = R - floor(R*0.01) - floor(R*0.01) ··· Burn = floor(R*0.01) ··· Treasury = floor(R*0.01) ··· f=2% → dust → worker</p>
+      <p class="muted">Fixed supply 1B. Минта нет. Slash: 25 TOTAL → fully burned (no profit). Проверено: JS и Solidity дают одинаковый split на 10k рандом.</p>
       <hr>
-      <h3>Контракты &lt;200 строк · Gas-оптимизированы</h3>
-      <p class="mono">NanoToken.sol · TaskEscrow.sol · ITaskEscrow.sol</p>
-      <p class="muted">Развёртывание и тесты — секунды. Подходит как «золотой стандарт» для CogniMesh / WenAGI.</p>
+      <h3>Контракты hardened · Gas-оптимизированы · Reentrancy guard</h3>
+      <p class="mono">NanoToken.sol · TaskEscrow.sol (malleability check, domain cache, lock) · ITaskEscrow.sol</p>
+      <p class="muted">Развёртывание секунды. Rate-limit, 256KB body limit, security headers, XSS-экранирование — демо не падает на презентации.</p>
       <div class="row">
         <a class="btn btn-g" href="/api/stats" target="_blank">GET /api/stats</a>
-        <a class="btn btn-g" href="/api/tasks" target="_blank">GET /api/tasks</a>
+        <a class="btn btn-g" href="/api/tasks?limit=10" target="_blank">GET /api/tasks</a>
+        <a class="btn btn-g" href="/healthz" target="_blank">GET /healthz</a>
       </div>
     </div>
   </section>
@@ -189,9 +209,10 @@ hr{border:0;border-top:1px solid var(--line);margin:18px 0}
 <footer>
   <div class="wrap" style="border-top:1px solid var(--line);margin-top:44px;padding:24px 0 40px;color:var(--mut);font-size:12px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap">
     <span>NanoTask demo · CryptoLab · NFA / DYOR · <span class="mono">fork & extend → CogniMesh (zk) · WenAGI (metrics) · ProofGrid (GPU)</span></span>
-    <span>fee 2% → burn 1% · treasury 1% · minStake 50 TASK</span>
+    <span>fee 2% → burn 1% · treasury 1% · minStake 50 TASK · hardened</span>
   </div>
 </footer>
+<div class="offline" id="offline">нет сети — реконнект…</div>
 <div class="toast" id="toast"></div>
 
 <script type="module">
@@ -203,98 +224,186 @@ const toast=m=>{
   setTimeout(()=>el.style.display="none",2600);
 };
 const err=m=>{ $("err").textContent=m||""; };
+function escapeHtml(s){
+  return String(s??"").replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
 async function api(path, opts={}){
   const headers={"content-type":"application/json", ...(opts.headers||{})};
   if(apiKey) headers.authorization="Bearer "+apiKey;
-  const res=await fetch(path,{...opts, headers});
-  const body=await res.json().catch(()=>({}));
-  if(!res.ok) throw new Error(body.error||res.status);
-  return body;
+  const ctrl=new AbortController();
+  const tid=setTimeout(()=>ctrl.abort(), 8000);
+  try{
+    const res=await fetch(path,{...opts, headers, signal: ctrl.signal});
+    clearTimeout(tid);
+    const body=await res.json().catch(()=>({}));
+    if(!res.ok) throw new Error(body.error||res.status);
+    return body;
+  }catch(e){
+    clearTimeout(tid);
+    if(e.name==="AbortError") throw new Error("таймаут 8s — попробуй ещё");
+    throw e;
+  }
 }
 function fmt(n){ return Number(n||0).toLocaleString("en",{maximumFractionDigits:2}); }
+let pollTimer=null;
+let isOnline=true;
+function setConnState(ok){
+  const el=$("connState");
+  if(ok){ el.textContent="● online"; el.style.color="var(--ok)"; $("offline").style.display="none"; }
+  else{ el.textContent="○ offline"; el.style.color="var(--bad)"; $("offline").style.display="block"; }
+}
 async function refreshMe(){
-  if(!apiKey){ $("me").textContent="Агент ещё не создан."; $("meKpi").textContent=""; return; }
+  if(!apiKey){ $("me").textContent="Агент ещё не создан. Нажми «Запустить агента»."; $("meKpi").textContent=""; return; }
   try{
     const me=await api("/api/me");
-    $("me").innerHTML=`<span class="mono">${me.addr.slice(0,10)}…</span> <b>${me.label}</b><br>Balance <b>${fmt(me.balance)} TASK</b> · Stake <b>${fmt(me.stake)} TASK</b>`;
-    $("meKpi").innerHTML=`├─ in-flight escrow удерживает твою ликвидность = velocity sink<br>└─ стейк защищает от slash: держи ≥50`;
+    const safeLabel=escapeHtml(me.label);
+    const shortAddr=escapeHtml(me.addr.slice(0,10))+"…";
+    $("me").innerHTML=`<span class="mono">${shortAddr}</span> <b>${safeLabel}</b> <span class="copy" data-copy="${escapeHtml(me.addr)}">копировать addr</span><br>Balance <b>${fmt(me.balance)} TASK</b> · Stake <b>${fmt(me.stake)} TASK</b> <span class="copy" data-copy="${escapeHtml(apiKey)}">копировать key</span>`;
+    $("me").querySelectorAll(".copy").forEach(el=>{
+      el.onclick=()=>{ navigator.clipboard.writeText(el.dataset.copy).then(()=>toast("скопировано")); };
+    });
+    $("meKpi").textContent="├─ in-flight удерживает ликвидность = velocity sink\n└─ стейк ≥50: +0.2/мин за WAIT pool, slash 25 fully burned";
     err("");
-  }catch(e){ err(e.message); }
+    setConnState(true);
+  }catch(e){ err(e.message); setConnState(false); }
 }
 async function refreshStats(){
-  const s=await api("/api/stats");
-  $("stats").innerHTML=`
-    <div class="card"><div class="n">${fmt(s.supply)}</div><div class="l">Supply (после burn)</div></div>
-    <div class="card"><div class="n" style="color:var(--bad)">${fmt(s.burned)}</div><div class="l">Сожжено всего</div></div>
-    <div class="card"><div class="n">${s.inFlight}</div><div class="l">In Flight (заморожено)</div></div>
-    <div class="card"><div class="n">${fmt(s.treasury)}</div><div class="l">Treasury (1%)</div></div>
-    <div class="card"><div class="n">${s.settled}</div><div class="l">Settled задач</div></div>
-    <div class="card"><div class="n">${s.totalTasks}</div><div class="l">Всего задач</div></div>
-  `;
-  $("tokenomics").innerHTML=`
-    settled: ${s.settled} · open: ${s.open} · submitted: ${s.submitted} · slashed: ${s.slashed}<br>
-    fee 2% → burn ${s.burned} · treasury ${fmt(s.treasury)} · supply ↓ ${(1000000000 - s.supply).toFixed(2)}
-  `;
+  try{
+    const s=await api("/api/stats");
+    $("stats").innerHTML=`
+      <div class="card"><div class="n">${fmt(s.supply)}</div><div class="l">Supply (после burn)</div></div>
+      <div class="card"><div class="n" style="color:var(--bad)">${fmt(s.burned)}</div><div class="l">Сожжено всего</div></div>
+      <div class="card"><div class="n">${s.inFlight}</div><div class="l">In Flight (заморожено)</div></div>
+      <div class="card"><div class="n">${fmt(s.treasury)}</div><div class="l">Treasury (1%)</div></div>
+      <div class="card"><div class="n">${s.settled}</div><div class="l">Settled задач</div></div>
+      <div class="card"><div class="n">${s.totalTasks}</div><div class="l">Всего задач</div></div>
+    `;
+    $("tokenomics").textContent=`settled: ${s.settled} · open: ${s.open} · submitted: ${s.submitted} · slashed: ${s.slashed} | fee 2% → burn ${s.burned} · treasury ${fmt(s.treasury)} · supply ↓ ${(1000000000 - s.supply).toFixed(2)}`;
+    $("taskCount").textContent=`(${s.totalTasks})`;
+    setConnState(true);
+  }catch(e){ setConnState(false); }
 }
 async function refreshAgents(){
-  const {items}=await api("/api/agents");
-  $("agents").innerHTML=items.map(a=>`<tr><td>${a.label}</td><td>${fmt(a.balance)}</td><td>${fmt(a.stake)}</td></tr>`).join("")||`<tr><td colspan=3 class="muted">—</td></tr>`;
+  try{
+    const {items}=await api("/api/agents");
+    const rows=items.map(a=>`<tr><td>${escapeHtml(a.label)}</td><td>${fmt(a.balance)}</td><td>${fmt(a.stake)}</td></tr>`).join("")||`<tr><td colspan=3 class="muted">—</td></tr>`;
+    $("agents").innerHTML=rows;
+  }catch{}
 }
 async function refreshTasks(){
-  const {items}=await api("/api/tasks");
-  $("tasks").innerHTML=items.map(t=>{
-    const badge = t.status===0?'<span class="tag open">OPEN</span>': t.status===1?'<span class="tag submitted">SUBMITTED</span>': t.status===2?'<span class="tag settled">SETTLED</span>': t.status===3?'<span class="tag slashed">SLASHED</span>':'<span class="tag cancelled">CANCELLED</span>';
-    let actions="";
-    if(t.status===0) actions=`<button data-act="submit" data-id="${t.id}" class="btn btn-g" style="padding:6px 10px;font-size:12px">Submit</button> <button data-act="cancel" data-id="${t.id}" class="btn btn-g" style="padding:6px 10px;font-size:12px">Cancel</button>`;
-    else if(t.status===1) actions=`<button data-act="approve" data-id="${t.id}" class="btn btn-g" style="padding:6px 10px;font-size:12px">Approve</button> <button data-act="claim" data-id="${t.id}" class="btn btn-g" style="padding:6px 10px;font-size:12px">Claim</button> <button data-act="challenge" data-id="${t.id}" class="btn btn-g" style="padding:6px 10px;font-size:12px;color:var(--bad)">Challenge</button>`;
-    else actions=`<span class="muted mono">${t.split? `→ ${fmt(t.split.worker)} / burn ${fmt(t.split.burn)}`: ""}</span>`;
-    return `<tr><td class="mono">#${t.id}</td><td><div style="max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t.input||t.inputHash.slice(0,16)}</div><div class="muted mono" style="font-size:11px">${t.clientLabel||t.client.slice(0,8)} ${t.worker? "→ "+(t.workerLabel||t.worker.slice(0,8)):""}</div></td><td>${fmt(t.reward)}</td><td>${badge}</td><td style="white-space:nowrap">${actions}</td></tr>`;
-  }).join("")||`<tr><td colspan=5 class="muted">Задач пока нет — создай первую.</td></tr>`;
-  // bind
-  $("tasks").querySelectorAll("button").forEach(b=>{
-    b.onclick=async()=>{
-      const id=b.dataset.id, act=b.dataset.act;
-      try{
-        if(act==="submit"){
-          const rh="0x"+[...crypto.getRandomValues(new Uint8Array(16))].map(x=>x.toString(16).padStart(2,"0")).join("");
-          await api(`/api/tasks/${id}/submit`,{method:"POST", body:JSON.stringify({resultHash: rh})});
-          toast(`Submitted #${id}`);
-        } else if(act==="approve") { await api(`/api/tasks/${id}/approve`,{method:"POST"}); toast(`Approved #${id} — split 98/1/1`); }
-        else if(act==="claim") { await api(`/api/tasks/${id}/claim`,{method:"POST"}); toast(`Claimed #${id} after timeout`); }
-        else if(act==="challenge") { await api(`/api/tasks/${id}/challenge`,{method:"POST", body:JSON.stringify({reason:"spam"})}); toast(`Challenged #${id} — slash`); }
-        else if(act==="cancel") { await api(`/api/tasks/${id}/cancel`,{method:"POST"}); toast(`Cancelled #${id}`); }
-        await refreshAll();
-      }catch(e){ toast(e.message); }
-    };
-  });
+  try{
+    const {items}=await api("/api/tasks?limit=80");
+    if(!items.length){ $("tasks").innerHTML=`<tr><td colspan=5 class="muted">Задач пока нет — создай первую.</td></tr>`; return; }
+    $("tasks").innerHTML=items.map(t=>{
+      const badge = t.status===0?'<span class="tag open">OPEN</span>': t.status===1?'<span class="tag submitted">SUBMITTED</span>': t.status===2?'<span class="tag settled">SETTLED</span>': t.status===3?'<span class="tag slashed">SLASHED</span>':'<span class="tag cancelled">CANCELLED</span>';
+      let actions="";
+      if(t.status===0) actions=`<button data-act="submit" data-id="${t.id}" class="btn btn-g" style="padding:6px 10px;font-size:12px">Submit</button> <button data-act="cancel" data-id="${t.id}" class="btn btn-g" style="padding:6px 10px;font-size:12px">Cancel</button>`;
+      else if(t.status===1) actions=`<button data-act="approve" data-id="${t.id}" class="btn btn-g" style="padding:6px 10px;font-size:12px">Approve</button> <button data-act="claim" data-id="${t.id}" class="btn btn-g" style="padding:6px 10px;font-size:12px">Claim</button> <button data-act="challenge" data-id="${t.id}" class="btn btn-g" style="padding:6px 10px;font-size:12px;color:var(--bad)">Challenge</button>`;
+      else actions=`<span class="muted mono">→ ${t.split? `${fmt(t.split.worker)} / burn ${fmt(t.split.burn)}`: ""}</span>`;
+      const inputSafe=escapeHtml((t.input||t.inputHash||"").slice(0,60));
+      const clientSafe=escapeHtml((t.clientLabel||t.client||"").slice(0,10));
+      const workerSafe=t.worker? escapeHtml((t.workerLabel||t.worker).slice(0,10)) : "";
+      return `<tr><td class="mono">#${escapeHtml(t.id)}</td><td><div style="max-width:280px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${inputSafe}">${inputSafe}</div><div class="muted mono" style="font-size:11px">${clientSafe} ${workerSafe? "→ "+workerSafe:""}</div></td><td>${fmt(t.reward)}</td><td>${badge}</td><td style="white-space:nowrap">${actions}</td></tr>`;
+    }).join("");
+    $("tasks").querySelectorAll("button").forEach(b=>{
+      b.onclick=async()=>{
+        const id=b.dataset.id, act=b.dataset.act;
+        b.disabled=true;
+        try{
+          if(act==="submit"){
+            const rand=[...crypto.getRandomValues(new Uint8Array(32))].map(x=>x.toString(16).padStart(2,"0")).join("");
+            const rh="0x"+rand;
+            await api(`/api/tasks/${id}/submit`,{method:"POST", body:JSON.stringify({resultHash: rh, signature: "0x"+rand+rand.slice(0,66)})});
+            toast(`Submitted #${id}`);
+          } else if(act==="approve") { await api(`/api/tasks/${id}/approve`,{method:"POST"}); toast(`Approved #${id} — split 98/1/1`); }
+          else if(act==="claim") { await api(`/api/tasks/${id}/claim`,{method:"POST"}); toast(`Claimed #${id} after timeout`); }
+          else if(act==="challenge") { await api(`/api/tasks/${id}/challenge`,{method:"POST", body:JSON.stringify({reason:"spam"})}); toast(`Challenged #${id} — slash 25`); }
+          else if(act==="cancel") { await api(`/api/tasks/${id}/cancel`,{method:"POST"}); toast(`Cancelled #${id}`); }
+          await refreshAll();
+        }catch(e){ toast(e.message); } finally{ b.disabled=false; }
+      };
+    });
+  }catch(e){ /* silent */ }
+}
+async function refreshPool(){
+  try{
+    const {items, stats} = await api("/api/presence/pool");
+    $("poolCount").textContent = `${items.length} онлайн`;
+    $("poolIdle").textContent = `пул idle ${Number(stats.totalIdleEarned||0).toFixed(1)}`;
+    if(!items.length){ $("pool").innerHTML=`<tr><td colspan=6 class="muted">Пусто — стань первым, нажми "Встать в пул" или подключи MCP --wait</td></tr>`; return; }
+    $("pool").innerHTML = items.map(p=>`<tr><td>${escapeHtml(p.label)}<br><span class="mono" style="font-size:11px">${escapeHtml(p.addr.slice(0,10))}…</span></td><td>${escapeHtml((p.capabilities||[]).join(", ")||"generic")}</td><td>${p.waitingSec}с</td><td>${fmt(p.stake)}</td><td>${p.tasksDone||0}</td><td style="color:var(--lime)">+${fmt(p.idleEarned||0)}</td></tr>`).join("");
+  }catch(e){ /* silent */ }
 }
 async function refreshWall(){
-  const {items}=await api("/api/wall");
-  $("wall").innerHTML=items.map(w=>`<div><b class="mono">#${w.id}</b> “${w.input}” → <b>${w.to}</b> earned <span style="color:var(--ok)">${fmt(w.split.worker)}</span> <span class="muted">burn ${fmt(w.split.burn)}</span></div>`).join("")||`<div class="muted">Пока нет сеттлов — выполни задачу.</div>`;
+  try{
+    const {items}=await api("/api/wall");
+    if(!items.length){ $("wall").innerHTML=`<div class="muted">Пока нет сеттлов — выполни задачу.</div>`; return; }
+    $("wall").innerHTML=items.map(w=>`<div><b class="mono">#${escapeHtml(w.id)}</b> “${escapeHtml(w.input)}” → <b>${escapeHtml(w.to)}</b> earned <span style="color:var(--ok)">${fmt(w.split.worker)}</span> <span class="muted">burn ${fmt(w.split.burn)}</span></div>`).join("");
+  }catch{}
 }
 async function refreshEvents(){
-  const {items}=await api("/api/events");
-  $("events").innerHTML=items.map(e=>`<div><span class="mono" style="color:var(--mut)">${new Date(e.ts).toLocaleTimeString()}</span> <b>${e.type}</b> ${e.detail}</div>`).join("")||`<div class="muted">—</div>`;
+  try{
+    const {items}=await api("/api/events");
+    if(!items.length){ $("events").innerHTML=`<div class="muted">—</div>`; return; }
+    $("events").innerHTML=items.map(e=>`<div><span class="mono" style="color:var(--mut)">${escapeHtml(new Date(e.ts).toLocaleTimeString())}</span> <b>${escapeHtml(e.type)}</b> ${escapeHtml(e.detail)}</div>`).join("");
+  }catch{}
 }
-async function refreshAll(){ await Promise.all([refreshMe(), refreshStats(), refreshAgents(), refreshTasks(), refreshWall(), refreshEvents()]); }
+async function refreshAll(){
+  await Promise.allSettled([refreshMe(), refreshStats(), refreshAgents(), refreshTasks(), refreshWall(), refreshEvents(), refreshPool()]);
+}
+
+function validateLabel(s){
+  return /^[a-zA-Z0-9._\- ]{1,32}$/.test(s);
+}
 
 $("spawn").onclick=async()=>{
   try{
     const label=$("label").value.trim()||"my-agent";
+    if(!validateLabel(label)) throw new Error("Имя: 1-32, только a-z 0-9 . _ - пробел");
     const out=await api("/api/agents",{method:"POST", body:JSON.stringify({label})});
     apiKey=out.apiKey; localStorage.setItem(KEY, apiKey);
-    toast(`Агент ${label} создан · stake ${out.stake}`);
+    toast(`Агент ${escapeHtml(label)} создан · stake ${out.stake}`);
     await refreshAll();
-  }catch(e){ err(e.message); }
+  }catch(e){ err(e.message); toast(e.message); }
 };
 $("cta-spawn").onclick=()=>{ $("label").focus(); window.scrollTo({top: $("console").offsetTop-80, behavior:"smooth"}); };
 $("faucet").onclick=async()=>{ try{ const r=await api("/api/faucet",{method:"POST", body:JSON.stringify({amount:250})}); toast(`+${r.toppedUp} TASK`); await refreshAll(); }catch(e){ toast(e.message);} };
 $("stakeBtn").onclick=async()=>{ try{ const r=await api("/api/stake",{method:"POST", body:JSON.stringify({amount:20})}); toast(`stake ${r.stake}`); await refreshAll(); }catch(e){ toast(e.message);} };
+let heartbeatTimer=null;
+async function doHeartbeat(){
+  if(!apiKey) return toast("сначала создай агента");
+  try{
+    const r=await api("/api/presence/heartbeat",{method:"POST"});
+    if(r.idleReward) toast(`heartbeat +${r.idleReward} idle, пул ${r.poolSize}`);
+    await refreshPool();
+  }catch(e){ toast(e.message); }
+}
+$("joinPool").onclick=doHeartbeat;
+$("setCaps").onclick=async()=>{
+  if(!apiKey) return toast("сначала создай агента");
+  const caps=$("capsInput").value.split(",").map(s=>s.trim()).filter(Boolean);
+  try{ await api("/api/presence/capabilities",{method:"POST", body:JSON.stringify({capabilities: caps})}); toast(`скилы: ${caps.join(", ")||"generic"}`); await refreshPool(); }catch(e){ toast(e.message); }
+};
+$("waitBtn").onclick=async()=>{
+  if(!apiKey) return toast("сначала создай агента");
+  toast("ждешь работу...");
+  try{
+    const r=await api("/api/presence/wait",{method:"POST", body:JSON.stringify({capabilities: $("capsInput").value.split(",").map(s=>s.trim()).filter(Boolean)})});
+    if(r.task) toast(`прилетела задача #${r.task.id}: ${r.task.input}`); else toast("пока нет задач, жди + heartbeat");
+    await refreshAll();
+  }catch(e){ toast(e.message); }
+};
+// авто-heartbeat если агент в пуле — каждые 30с
+setInterval(()=>{ if(apiKey && document.visibilityState==="visible") doHeartbeat(); }, 30000);
+
 $("create").onclick=async()=>{
   try{
     const input=$("taskInput").value.trim()||"demo task";
-    const reward=Number($("reward").value)||50;
-    const timeout=Number($("timeout").value)||40;
+    if(input.length>180) throw new Error("input max 180");
+    const reward=Number($("reward").value);
+    if(!Number.isInteger(reward) || reward<1 || reward>1000000) throw new Error("Награда 1..1M целое");
+    const timeout=Number($("timeout").value);
+    if(!Number.isInteger(timeout) || timeout<5 || timeout>2592000) throw new Error("Timeout 5..2592000");
     await api("/api/tasks",{method:"POST", body:JSON.stringify({input, reward, timeout})});
     toast(`Задача создана — ${reward} TASK в эскроу`);
     await refreshAll();
@@ -302,7 +411,21 @@ $("create").onclick=async()=>{
 };
 
 refreshAll();
-setInterval(refreshAll, 4000);
+function startPoll(){
+  if(pollTimer) clearInterval(pollTimer);
+  pollTimer=setInterval(()=>{
+    if(document.hidden) return;
+    refreshAll();
+  }, 3000);
+}
+startPoll();
+document.addEventListener("visibilitychange", ()=>{
+  if(document.hidden){ $("pollBadge").textContent="paused"; }
+  else{ $("pollBadge").textContent="poll 3s"; refreshAll(); }
+});
+window.addEventListener("online", ()=>{ setConnState(true); refreshAll(); });
+window.addEventListener("offline", ()=> setConnState(false));
+setConnState(navigator.onLine);
 </script>
 </body>
 </html>

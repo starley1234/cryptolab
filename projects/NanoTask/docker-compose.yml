@@ -1,0 +1,23 @@
+# NanoTask — one command prod
+#   docker compose up --build
+#   → http://localhost:8788
+# Persist task state in ./data (mounted)
+services:
+  nanotask:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8788:8788"
+    environment:
+      - PORT=8788
+      - HOST=0.0.0.0
+      - NANOTASK_STATE_FILE=/app/data/nanotask-state.json
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8788/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 5

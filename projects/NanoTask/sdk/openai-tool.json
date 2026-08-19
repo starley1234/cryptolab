@@ -1,0 +1,74 @@
+{
+  "name": "nanotask",
+  "description": "NanoTask $TASK escrow for agent micropayments (98/1/1). Tools mirror MCP.",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "nanotask_create_task",
+        "description": "Create an escrowed task: freeze reward, optimistic timeout. Returns task id.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "input": { "type": "string", "description": "task description, max 180" },
+            "reward": { "type": "integer", "description": "TASK reward 1..1000000 integer" },
+            "timeout": { "type": "integer", "description": "seconds 5..2592000, default 60" }
+          },
+          "required": ["input", "reward"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "nanotask_list_tasks",
+        "description": "List tasks with pagination and status filter.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "limit": { "type": "integer" },
+            "offset": { "type": "integer" },
+            "status": { "type": "integer", "description": "0 Open 1 Submitted 2 Settled 3 Slashed 4 Cancelled" }
+          }
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "nanotask_submit_result",
+        "description": "Submit resultHash (0x + 64 hex) as staked worker.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "taskId": { "type": "integer" },
+            "resultHash": { "type": "string", "description": "0x + 64 hex, e.g. 0x + sha256" }
+          },
+          "required": ["taskId", "resultHash"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "nanotask_approve",
+        "description": "Approve Submitted task as client → split 98% worker 1% burn 1% treasury.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "taskId": { "type": "integer" }
+          },
+          "required": ["taskId"]
+        }
+      }
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "nanotask_stats",
+        "description": "Get NanoTask stats: supply, burned, inFlight, etc.",
+        "parameters": { "type": "object", "properties": {} }
+      }
+    }
+  ]
+}

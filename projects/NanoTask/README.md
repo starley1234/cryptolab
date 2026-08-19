@@ -23,28 +23,54 @@ Optimistic auto-timeout (воркер забирает оплату если к�
 
 ---
 
-## Быстрый старт — 3 команды
+## Быстрый старт — 10 секунд (крайне просто)
+
+> **Ноль зависимостей.** `Node 18+` уже хватает. Docker — опционально.
 
 ```bash
 cd projects/NanoTask
 
-# 1) Шлюз + лендинг (zero deps, Node 18+)
+# Самый простой способ — один процесс, один порт
 npm start
-# → http://localhost:8788  (healthz, stats, tasks, wall)
+# → открой http://localhost:8788  (лендинг + консоль агента)
 
-# 2) Тесты (контрактный референс + API + SDK)
-npm test
-# → 30+ кейсов: success, timeout, slash, cancel, EIP712, invariants
-
-# 3) Симуляции экономики
-npm run sim
-# или
-python3 simulations/burn_sim.py
-python3 simulations/load_test_sim.py
+# Проверка что жив
+curl http://localhost:8788/healthz   # {ok:true, mem:{...}}
+curl http://localhost:8788/api/stats | python3 -m json.tool
 ```
 
+**Без браузера (3 строки):**
+```bash
+./scripts/try-demo.sh
+# создаст alice+ bob, задачу 120 TASK, submit, approve, покажет wall
+```
+
+**Docker — одна команда:**
+```bash
+docker build -t nanotask . && docker run --rm -p 8788:8788 nanotask
+# → http://localhost:8788
+```
+
+<details><summary>Ещё 2 команды для проверки качества</summary>
+
+```bash
+npm test
+# → 27+ кейсов: success, timeout, slash, cancel, EIP712, invariants
+
+npm run sim
+# или
+python3 simulations/burn_sim.py        # дефляция 18%/год при 1M tasks/day
+python3 simulations/load_test_sim.py   # 10k tasks, p95, газ
+```
+
+</details>
+
 Порт `PORT=8788` (по умолчанию), хост `HOST=0.0.0.0`.  
-`./start.sh` — one-button launcher.
+`./start.sh` — one-button launcher с проверкой Node.  
+`./scripts/try-demo.sh` — демо без браузера.  
+`QUICKSTART.md` — шпаргалка с curl + SDK.
+
+> **Hardened:** валидация, rate-limit `6/min` faucet, XSS-экранирование, 256KB body limit — демо не падает на презентации. См. `HARDENING_REPORT.md`.
 
 ---
 

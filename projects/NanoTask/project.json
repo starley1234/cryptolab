@@ -1,21 +1,27 @@
 {
   "name": "NanoTask",
   "slug": "nanotask",
-  "version": "1.0.0",
-  "status": "prototype",
+  "version": "1.1.0",
+  "status": "hardened",
   "ticker": "TASK",
   "slogan": "The Minimalist Micropayment & Escrow Standard for Autonomous Agents",
   "description": "ERC-20 для агентных задач: заморозка → исполнение → подтверждение → сплит 98/1/1 (worker/burn/treasury). Optimistic auto-timeout, staked workers с slash, EIP-712 gasless, EIP-2612 permit.",
   "contracts": {
     "chain": "Base",
     "solidity": "0.8.28",
-    "tokens": ["NanoToken", "TaskEscrow"],
+    "tokens": [
+      "NanoToken",
+      "TaskEscrow"
+    ],
     "feeBps": 200,
     "burnBps": 100,
     "treasuryBps": 100
   },
   "dependencies": {
-    "hub": ["CogniMesh", "WenAGI"],
+    "hub": [
+      "CogniMesh",
+      "WenAGI"
+    ],
     "extends": "CogniMesh A2A settlement 70/20/10 → NanoTask ultra-minimal 98/1/1"
   },
   "repos": {
@@ -29,5 +35,7 @@
     "test": "npm test",
     "sim": "npm run sim"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "hardened": true,
+  "quickstart": "npm start → http://localhost:8788  |  ./scripts/try-demo.sh"
 }

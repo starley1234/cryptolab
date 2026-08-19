@@ -146,8 +146,6 @@ contract TaskEscrow is ITaskEscrow {
         if(t.client==address(0)) revert TaskNotFound();
         if(t.status!=Status.Submitted) revert BadStatus(t.status, Status.Submitted);
         if(msg.sender!=t.client) revert NotClient();
-        // FIX: slash fully burned (no profit for challenger) — removes perverse incentive to always challenge honest work.
-        // Challenger gets only refund (t.reward). Stake burn is protocol revenue, not user profit.
         uint256 sl = stakes[t.worker] >= minStake ? minStake/2 : stakes[t.worker];
         if(sl>0){ stakes[t.worker]-=sl;
             burnedTotal += sl;
